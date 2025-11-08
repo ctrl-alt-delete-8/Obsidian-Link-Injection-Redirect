@@ -1,0 +1,11 @@
+{
+	"id": "link-injection",
+	"name": "Link Injection",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Inject variables into links with ${KEY} and ${L:property} patterns. Replace placeholders with dictionary values or note properties.",
+	"author": "@tinkerer-ctrl-alt-del",
+	"authorUrl": "",
+	"fundingUrl": "https://www.buymeacoffee.com/tinkerer.ctrl.alt.del",
+	"isDesktopOnly": false
+}
