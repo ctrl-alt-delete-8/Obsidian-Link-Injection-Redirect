@@ -5,15 +5,10 @@ import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian'
  *
  * This plugin provides:
  * 1. Link pattern replacement: ${KEY} for dictionary values, ${L:property} for note properties
- * 2. Value hiding: Security feature to hide sensitive data in settings UI
  */
 interface MyPluginSettings {
 	// Link Replacement Dictionary
 	linkReplacements: Record<string, string>; // Key-value pairs for ${KEY} pattern replacement
-
-	// Security: Value Hiding in Settings UI
-	hideValuesByDefault: boolean; // If true, values shown as dots by default
-	hiddenKeys: string[]; // Keys explicitly hidden when hideValuesByDefault is false
 
 	// Character Replacement for ${L:property} patterns
 	invalidCharReplacement: string; // Character to replace /, \, : in property values (for internal links only)
@@ -21,8 +16,6 @@ interface MyPluginSettings {
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
 	linkReplacements: {}, // Empty dictionary by default
-	hideValuesByDefault: true, // Hide values by default for security
-	hiddenKeys: [], // No explicitly hidden keys by default
 	invalidCharReplacement: ' ' // Replace invalid chars with space by default
 }
 
@@ -217,12 +210,61 @@ export default class MyPlugin extends Plugin {
 				const hasPattern = processed !== decodedUrl;
 
 				if (hasPattern) {
-					// Add menu item to open the processed URL
+					let hasWebviewerOption = false;
+					const menuItems = (menu as any).items || [];
+
+					// Scan menu items to check for webviewer option and hide default items
+					for (let i = 0; i < menuItems.length; i++) {
+						const item = menuItems[i];
+						const title = item?.titleEl?.textContent || item?.title || '';
+						const lowerTitle = title.toLowerCase();
+
+						// Check if this is a webviewer option
+						if (lowerTitle.includes('webviewer') || lowerTitle.includes('web viewer')) {
+							hasWebviewerOption = true;
+							if (item.dom) {
+								item.dom.style.display = 'none';
+							}
+						}
+						// Check if this is a default open link item
+						else if (
+							lowerTitle.includes('open link') ||
+							lowerTitle.includes('default browser') ||
+							lowerTitle === 'open' ||
+							(lowerTitle.startsWith('open') && !lowerTitle.includes('injection'))
+						) {
+							if (item.dom) {
+								item.dom.style.display = 'none';
+							}
+						}
+					}
+
+					const menuEl = (menu as any).dom;
+
+					// Add menu item to open in webviewer (only if original menu has it)
+					if (hasWebviewerOption) {
+						menu.addItem((item) => {
+							item.setTitle('Open in webviewer (with injection)');
+							item.setIcon('globe');
+							item.onClick(() => {
+								window.open(processed, '_blank');
+							});
+						});
+
+						// Move this item to the top
+						if (menuEl && menuEl.firstChild && menuItems.length > 0) {
+							const lastItem = menuItems[menuItems.length - 1];
+							if (lastItem.dom) {
+								menuEl.insertBefore(lastItem.dom, menuEl.firstChild);
+							}
+						}
+					}
+
+					// Add menu item to open externally
 					menu.addItem((item) => {
-						item.setTitle('Open link with injection');
-						item.setIcon('link');
+						item.setTitle('Open externally (with injection)');
+						item.setIcon('external-link');
 						item.onClick(() => {
-							// Try to use Electron shell if available, otherwise use window.open
 							const electron = (window as any).require?.('electron');
 							if (electron?.shell?.openExternal) {
 								electron.shell.openExternal(processed);
@@ -231,6 +273,23 @@ export default class MyPlugin extends Plugin {
 							}
 						});
 					});
+
+					// Move this item to the top
+					if (menuEl && menuEl.firstChild && menuItems.length > 0) {
+						const lastItem = menuItems[menuItems.length - 1];
+						if (lastItem.dom) {
+							menuEl.insertBefore(lastItem.dom, menuEl.firstChild);
+						}
+					}
+
+					// Add separator after our items
+					menu.addSeparator();
+					if (menuEl && menuItems.length > 0) {
+						const lastItem = menuItems[menuItems.length - 1];
+						if (lastItem.dom) {
+							menuEl.insertBefore(lastItem.dom, menuEl.children[hasWebviewerOption ? 2 : 1]);
+						}
+					}
 				}
 			})
 		);
@@ -259,23 +318,14 @@ export default class MyPlugin extends Plugin {
  *
  * Provides UI for:
  * 1. Link Replacement Dictionary - Key-value pairs for ${KEY} patterns
- * 2. Value Hiding - Security feature to hide sensitive data
- * 3. Invalid Character Replacement - Configurable replacement for ${L:property} patterns
- *
- * Value Hiding Behavior:
- * - When "Hide by default" is ON: All values hidden, reveal is temporary per session
- * - When "Hide by default" is OFF: Values shown, individual items can be explicitly hidden (persists)
- * - Auto-save on blur for better UX (no edit button needed)
- * - Session tracking prevents constant re-hiding during editing
+ * 2. Invalid Character Replacement - Configurable replacement for ${L:property} patterns
  */
 class SampleSettingTab extends PluginSettingTab {
 	plugin: MyPlugin;
-	private revealedInSession: Set<string>; // Track items revealed during current session
 
 	constructor(app: App, plugin: MyPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
-		this.revealedInSession = new Set<string>();
 	}
 
 	display(): void {
@@ -283,27 +333,9 @@ class SampleSettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		// Clear session reveal state when settings page is opened/re-rendered
-		this.revealedInSession.clear();
-
 		// ========================================
-		// SECTION: Security Settings
+		// SECTION: Settings
 		// ========================================
-
-		new Setting(containerEl)
-			.setName('Hide values by default')
-			.setDesc('When enabled, all values are hidden by default (reveal is temporary during session). When disabled, values are shown by default (hide persists per item).')
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.hideValuesByDefault)
-				.onChange(async (value) => {
-					this.plugin.settings.hideValuesByDefault = value;
-					// Keep hiddenKeys array - it should persist across mode changes
-					// Clear session revealed items when switching modes
-					this.revealedInSession.clear();
-					await this.plugin.saveSettings();
-					// Re-render to update all items
-					this.display();
-				}));
 
 		new Setting(containerEl)
 			.setName('Invalid character replacement')
@@ -336,12 +368,6 @@ class SampleSettingTab extends PluginSettingTab {
 				const replacementDiv = replacementsContainer.createDiv('replacement-item');
 				replacementDiv.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-bottom: 5px;');
 
-				// Determine visibility: check if revealed in this session first
-				// Otherwise follow the default/explicit hidden rules
-				const shouldBeHidden = this.plugin.settings.hideValuesByDefault ||
-					this.plugin.settings.hiddenKeys.includes(key);
-				let isHidden = shouldBeHidden && !this.revealedInSession.has(key);
-
 				const keyInput = replacementDiv.createEl('input', {
 					type: 'text',
 					placeholder: 'Key',
@@ -365,19 +391,6 @@ class SampleSettingTab extends PluginSettingTab {
 					if (newKey && newKey !== key) {
 						delete this.plugin.settings.linkReplacements[key];
 						this.plugin.settings.linkReplacements[newKey] = value;
-
-						// Update hiddenKeys if key was renamed
-						const hiddenIndex = this.plugin.settings.hiddenKeys.indexOf(key);
-						if (hiddenIndex !== -1) {
-							this.plugin.settings.hiddenKeys[hiddenIndex] = newKey;
-						}
-
-						// Update revealedInSession if key was renamed
-						if (this.revealedInSession.has(key)) {
-							this.revealedInSession.delete(key);
-							this.revealedInSession.add(newKey);
-						}
-
 						await this.plugin.saveSettings();
 
 						// Need to re-render because key changed
@@ -386,26 +399,14 @@ class SampleSettingTab extends PluginSettingTab {
 				});
 
 				const valueInput = replacementDiv.createEl('input', {
-					type: isHidden ? 'password' : 'text',
+					type: 'text',
 					placeholder: 'Value',
 					value: value,
 					cls: 'replacement-value',
 					attr: { style: 'width: 300px;' }
 				});
 
-				// Auto-reveal when user focuses on value input (for editing)
-				valueInput.addEventListener('focus', () => {
-					if (isHidden) {
-						this.revealedInSession.add(key);
-						isHidden = false;
-						valueInput.type = 'text';
-						if (!this.plugin.settings.hideValuesByDefault) {
-							updateToggleButton();
-						}
-					}
-				});
-
-				// Auto-save and auto-hide on blur
+				// Auto-save on blur
 				valueInput.addEventListener('blur', async () => {
 					const newValue = valueInput.value.trim();
 
@@ -414,60 +415,7 @@ class SampleSettingTab extends PluginSettingTab {
 						this.plugin.settings.linkReplacements[key] = newValue;
 						await this.plugin.saveSettings();
 					}
-
-					// Auto-hide if it should be hidden
-					if (shouldBeHidden) {
-						this.revealedInSession.delete(key);
-						isHidden = true;
-						valueInput.type = 'password';
-						if (!this.plugin.settings.hideValuesByDefault) {
-							updateToggleButton();
-						}
-					}
 				});
-
-				// Helper function to update toggle button appearance (only used if button exists)
-				const updateToggleButton = () => {
-					if (!this.plugin.settings.hideValuesByDefault && toggleButton) {
-						toggleButton.innerHTML = isHidden ? '👁' : '👁‍🗨';
-						toggleButton.setAttribute('title', isHidden ? 'Reveal value' : 'Hide value');
-					}
-				};
-
-				// Visibility toggle button - only show when default is to reveal
-				let toggleButton: HTMLButtonElement | null = null;
-				if (!this.plugin.settings.hideValuesByDefault) {
-					toggleButton = replacementDiv.createEl('button', {
-						cls: 'clickable-icon',
-						attr: {
-							title: isHidden ? 'Reveal value' : 'Hide value',
-							style: 'width: 30px; height: 30px; padding: 0; display: flex; align-items: center; justify-content: center;'
-						}
-					});
-					toggleButton.innerHTML = isHidden ? '👁' : '👁‍🗨';
-
-					toggleButton.addEventListener('click', async () => {
-						isHidden = !isHidden;
-						valueInput.type = isHidden ? 'password' : 'text';
-						updateToggleButton();
-
-						// Persist hide state (since default is to reveal)
-						if (isHidden) {
-							// User is hiding - persist this
-							if (!this.plugin.settings.hiddenKeys.includes(key)) {
-								this.plugin.settings.hiddenKeys.push(key);
-								await this.plugin.saveSettings();
-							}
-							this.revealedInSession.delete(key);
-						} else {
-							// User is revealing - remove from hidden list
-							this.plugin.settings.hiddenKeys =
-								this.plugin.settings.hiddenKeys.filter(k => k !== key);
-							await this.plugin.saveSettings();
-							this.revealedInSession.add(key);
-						}
-					});
-				}
 
 				const deleteButton = replacementDiv.createEl('button', {
 					cls: 'mod-warning',
@@ -479,11 +427,6 @@ class SampleSettingTab extends PluginSettingTab {
 				deleteButton.innerHTML = '✕'; // X icon
 				deleteButton.addEventListener('click', async () => {
 					delete this.plugin.settings.linkReplacements[key];
-					// Remove from hiddenKeys if present
-					this.plugin.settings.hiddenKeys =
-						this.plugin.settings.hiddenKeys.filter(k => k !== key);
-					// Remove from session revealed list
-					this.revealedInSession.delete(key);
 					await this.plugin.saveSettings();
 					renderReplacements();
 				});
@@ -539,58 +482,86 @@ class SampleSettingTab extends PluginSettingTab {
 		renderReplacements();
 
 		// Author and Support section
-		containerEl.createEl('hr', { attr: { style: 'margin: 30px 0 20px 0; border: none; border-top: 1px solid var(--background-modifier-border);' } });
-
-		const authorSection = containerEl.createDiv();
-		authorSection.setAttribute('style', 'text-align: center; margin: 15px 0;');
-
-		authorSection.createEl('p', {
-			text: 'Created by @tinkerer-ctrl-alt-del',
-			attr: { style: 'margin: 5px 0; font-weight: bold;' }
-		});
-
-		authorSection.createEl('p', {
-			text: 'Have questions, found a bug, or want to request a feature? Join the Discord server!',
-			attr: { style: 'margin: 5px 0; color: var(--text-muted);' }
-		});
-
-		const buttonsContainer = containerEl.createDiv();
-		buttonsContainer.setAttribute('style', 'text-align: center; margin: 20px 0; display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;');
-
-		// Buy Me a Coffee button
-		const coffeeButton = buttonsContainer.createEl('a', {
-			text: 'Buy me a coffee',
-			href: 'https://www.buymeacoffee.com/tinkerer.ctrl.alt.del',
-			attr: {
-				target: '_blank',
-				style: 'display: inline-block; padding: 10px 20px; background-color: #FFDD00; color: #000000; text-decoration: none; border-radius: 5px; font-weight: bold; border: 2px solid #000000; transition: opacity 0.2s;'
-			}
-		});
-
-		coffeeButton.addEventListener('mouseenter', () => {
-			coffeeButton.style.opacity = '0.8';
-		});
-
-		coffeeButton.addEventListener('mouseleave', () => {
-			coffeeButton.style.opacity = '1';
-		});
-
-		// Discord button
-		const discordButton = buttonsContainer.createEl('a', {
-			text: '💬 Join Discord',
-			href: 'https://discord.com/invite/bXMpCTBMcg',
-			attr: {
-				target: '_blank',
-				style: 'display: inline-block; padding: 10px 20px; background-color: #5865F2; color: #FFFFFF; text-decoration: none; border-radius: 5px; font-weight: bold; border: 2px solid #4752C4; transition: opacity 0.2s;'
-			}
-		});
-
-		discordButton.addEventListener('mouseenter', () => {
-			discordButton.style.opacity = '0.8';
-		});
-
-		discordButton.addEventListener('mouseleave', () => {
-			discordButton.style.opacity = '1';
-		});
+		createAuthorSupportSection(containerEl, 'https://github.com/ctrl-alt-delete-8/Obsidian-Link-Injection-Redirect');
 	}
+}
+
+/**
+ * Reusable function to create author and support section with buttons
+ * @param containerEl - The container element to append the section to
+ * @param githubRepoUrl - The GitHub repository URL
+ */
+function createAuthorSupportSection(containerEl: HTMLElement, githubRepoUrl: string) {
+	// Author and Support section
+	containerEl.createEl('hr', { attr: { style: 'margin: 30px 0 20px 0; border: none; border-top: 1px solid var(--background-modifier-border);' } });
+
+	const authorSection = containerEl.createDiv();
+	authorSection.setAttribute('style', 'text-align: center; margin: 15px 0;');
+
+	authorSection.createEl('p', {
+		text: 'Created by @tinkerer-ctrl-alt-del',
+		attr: { style: 'margin: 5px 0; font-weight: bold;' }
+	});
+
+	authorSection.createEl('p', {
+		text: 'Have questions, found a bug, or want to request a feature? Join the Discord server!',
+		attr: { style: 'margin: 5px 0; color: var(--text-muted);' }
+	});
+
+	const buttonsContainer = containerEl.createDiv();
+	buttonsContainer.setAttribute('style', 'text-align: center; margin: 20px 0; display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;');
+
+	// Discord button
+	const discordButton = buttonsContainer.createEl('a', {
+		text: '💬 Join Discord',
+		href: 'https://discord.com/invite/bXMpCTBMcg',
+		attr: {
+			target: '_blank',
+			style: 'display: inline-block; padding: 10px 20px; background-color: #5865F2; color: #FFFFFF; text-decoration: none; border-radius: 5px; font-weight: bold; border: 2px solid #4752C4; transition: opacity 0.2s;'
+		}
+	});
+
+	discordButton.addEventListener('mouseenter', () => {
+		discordButton.style.opacity = '0.8';
+	});
+
+	discordButton.addEventListener('mouseleave', () => {
+		discordButton.style.opacity = '1';
+	});
+
+	// Buy Me a Coffee button
+	const coffeeButton = buttonsContainer.createEl('a', {
+		text: 'Buy me a coffee',
+		href: 'https://www.buymeacoffee.com/tinkerer.ctrl.alt.del',
+		attr: {
+			target: '_blank',
+			style: 'display: inline-block; padding: 10px 20px; background-color: #FFDD00; color: #000000; text-decoration: none; border-radius: 5px; font-weight: bold; border: 2px solid #000000; transition: opacity 0.2s;'
+		}
+	});
+
+	coffeeButton.addEventListener('mouseenter', () => {
+		coffeeButton.style.opacity = '0.8';
+	});
+
+	coffeeButton.addEventListener('mouseleave', () => {
+		coffeeButton.style.opacity = '1';
+	});
+
+	// GitHub repo button
+	const githubButton = buttonsContainer.createEl('a', {
+		text: 'GitHub repo',
+		href: githubRepoUrl,
+		attr: {
+			target: '_blank',
+			style: 'display: inline-block; padding: 10px 20px; background-color: #24292e; color: #FFFFFF; text-decoration: none; border-radius: 5px; font-weight: bold; border: 2px solid #1b1f23; transition: opacity 0.2s;'
+		}
+	});
+
+	githubButton.addEventListener('mouseenter', () => {
+		githubButton.style.opacity = '0.8';
+	});
+
+	githubButton.addEventListener('mouseleave', () => {
+		githubButton.style.opacity = '1';
+	});
 }

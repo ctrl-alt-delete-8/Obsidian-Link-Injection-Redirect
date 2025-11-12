@@ -1,6 +1,6 @@
 {
-	"id": "link-injection",
-	"name": "Link Injection",
+	"id": "link-injection-redirect",
+	"name": "Link Injection Redirect",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
 	"description": "Inject variables into links with ${KEY} and ${L:property} patterns. Replace placeholders with dictionary values or note properties.",
