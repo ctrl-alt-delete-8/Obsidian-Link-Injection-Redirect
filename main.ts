@@ -6,7 +6,7 @@ import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'ob
 interface DeviceProfile {
 	profileName: string; // User-defined short name for this vault (max 20 chars)
 	vaultPath: string; // Absolute path to the vault
-	linkReplacements: Record<string, string>; // Key-value pairs specific to this vault
+	linkReplacements: Record<string, string>; // Key-value pairs specific to this vault. Use "@@IGNORE@@" to mark a key as ignored on this device
 }
 
 /**
@@ -127,10 +127,36 @@ export default class MyPlugin extends Plugin {
 	getActiveLinkReplacements(): Record<string, string> {
 		const profile = this.getCurrentProfile();
 		// Start with defaults, then override with profile-specific values
-		return {
+		const merged = {
 			...this.settings.defaultLinkReplacements,
 			...(profile ? profile.linkReplacements : {})
 		};
+
+		// Filter out ignored keys (marked with @@IGNORE@@)
+		const filtered: Record<string, string> = {};
+		for (const [key, value] of Object.entries(merged)) {
+			if (value !== '@@IGNORE@@') {
+				filtered[key] = value;
+			}
+		}
+		return filtered;
+	}
+
+	/**
+	 * Check if a key is marked as ignored in the current profile (case-insensitive)
+	 * @param key - The dictionary key to check
+	 * @returns true if the key is ignored, false otherwise
+	 */
+	private isKeyIgnored(key: string): boolean {
+		const currentProfile = this.getCurrentProfile();
+		if (!currentProfile) return false;
+
+		// Case-insensitive lookup in profile's linkReplacements
+		const actualKey = Object.keys(currentProfile.linkReplacements).find(
+			k => k.toLowerCase() === key.toLowerCase()
+		);
+
+		return actualKey ? currentProfile.linkReplacements[actualKey] === '@@IGNORE@@' : false;
 	}
 
 	/**
@@ -164,6 +190,7 @@ export default class MyPlugin extends Plugin {
 	/**
 	 * Extract all dictionary keys from a URL pattern
 	 * Excludes ${L:property} patterns, only returns regular ${KEY} patterns
+	 * Note: OR patterns with ,, are NOT expanded here - they're handled separately
 	 * @param text - URL text that may contain ${KEY} patterns
 	 * @returns Array of key names
 	 */
@@ -176,10 +203,8 @@ export default class MyPlugin extends Plugin {
 			const content = match[1];
 			// Skip L:property patterns
 			if (!content.startsWith('L:')) {
-				// Handle OR patterns by splitting
-				if (content.includes(',')) {
-					content.split(',').forEach(k => keys.push(k.trim()));
-				} else {
+				// Skip OR patterns (with ,,) - they're handled in generateOrPatternChoices
+				if (!content.includes(',,')) {
 					keys.push(content.trim());
 				}
 			}
@@ -206,26 +231,98 @@ export default class MyPlugin extends Plugin {
 	}
 
 	/**
-	 * Check if a pattern contains OR syntax (,)
-	 * Detects patterns like ${one,two,three}
+	 * Check if a pattern contains OR syntax (,,)
+	 * Detects patterns like ${one,,two,,three} and nested patterns like ${${L:prop},,other}
 	 */
 	private hasOrPattern(text: string): boolean {
-		const orPatternRegex = /\$\{[^}]*,[^}]*\}/;
-		return orPatternRegex.test(text);
+		// Use balanced brace matching to properly detect nested patterns
+		let i = 0;
+		while (i < text.length) {
+			if (text[i] === '$' && text[i + 1] === '{') {
+				i += 2;
+				let braceCount = 1;
+				let content = '';
+
+				while (i < text.length && braceCount > 0) {
+					if (text[i] === '{') {
+						braceCount++;
+						content += text[i];
+					} else if (text[i] === '}') {
+						braceCount--;
+						if (braceCount > 0) {
+							content += text[i];
+						}
+					} else {
+						content += text[i];
+					}
+					i++;
+				}
+
+				// Check if this pattern contains ,,
+				if (content.includes(',,')) {
+					return true;
+				}
+			} else {
+				i++;
+			}
+		}
+		return false;
 	}
 
 	/**
 	 * Generate all possible URLs from OR patterns
-	 * For ${one,two}/${three,four}, generates 4 URLs with all combinations (2×2)
+	 * Uses ,, (double comma) as the OR separator
+	 * For ${one,,two}/${three,,four}, generates 4 URLs with all combinations (2×2)
+	 * For ${prefix${one},,alt${two}}, supports prefix/suffix around variables
 	 * @returns Array of {label, url, value, keys} objects
 	 */
 	private generateOrPatternChoices(text: string, sourcePath?: string, isInternalLink: boolean = true): Array<{label: string; url: string; value: string; keys: string[]}> {
 		// Find all OR patterns in the text
-		const orPatternRegex = /\$\{([^}]+)\}/g;
-		const matches = Array.from(text.matchAll(orPatternRegex));
+		// Need to handle nested ${} properly - use a function to extract balanced braces
+		const extractBalancedPatterns = (text: string): Array<{match: string; content: string; index: number}> => {
+			const patterns: Array<{match: string; content: string; index: number}> = [];
+			let i = 0;
 
-		// Find all patterns with OR operator
-		const orMatches = matches.filter(m => m[1].includes(','));
+			while (i < text.length) {
+				// Look for ${
+				if (text[i] === '$' && text[i + 1] === '{') {
+					const startIndex = i;
+					i += 2; // Skip ${
+					let braceCount = 1;
+					let content = '';
+
+					// Find matching }
+					while (i < text.length && braceCount > 0) {
+						if (text[i] === '{') {
+							braceCount++;
+							content += text[i];
+						} else if (text[i] === '}') {
+							braceCount--;
+							if (braceCount > 0) {
+								content += text[i];
+							}
+						} else {
+							content += text[i];
+						}
+						i++;
+					}
+
+					if (braceCount === 0) {
+						const match = text.substring(startIndex, i);
+						patterns.push({match, content, index: startIndex});
+					}
+				} else {
+					i++;
+				}
+			}
+
+			return patterns;
+		};
+
+		const matches = extractBalancedPatterns(text);
+
+		// Find all patterns with OR operator (,,)
+		const orMatches = matches.filter(m => m.content.includes(',,'));
 
 		if (orMatches.length === 0) {
 			// No OR pattern found, return single choice
@@ -240,10 +337,26 @@ export default class MyPlugin extends Plugin {
 		// Get active replacements to look up values
 		const activeReplacements = this.getActiveLinkReplacements();
 
-		// For each OR pattern, get the list of keys
-		const allKeyGroups: string[][] = orMatches.map(match =>
-			match[1].split(',').map(k => k.trim())
-		);
+		// For each OR pattern, split on ,, to get the list of options
+		// Treat bare words as ${word} (grammar sugar)
+		const allOptionGroups: string[][] = orMatches.map((match) => {
+			const content = match.content;
+			const splitOptions = content.split(',,');
+
+			const processedOptions = splitOptions.map((opt: string) => {
+				const trimmed = opt.trim();
+
+				// If option doesn't contain ${, treat it as a bare variable name
+				// Grammar sugar: "one" becomes "${one}"
+				if (!trimmed.includes('${')) {
+					return `\${${trimmed}}`;
+				} else {
+					return trimmed;
+				}
+			});
+
+			return processedOptions;
+		});
 
 		// Generate all combinations using cartesian product
 		const generateCombinations = (groups: string[][]): string[][] => {
@@ -263,41 +376,57 @@ export default class MyPlugin extends Plugin {
 			return result;
 		};
 
-		const combinations = generateCombinations(allKeyGroups);
+		const combinations = generateCombinations(allOptionGroups);
 
 		// Generate choices for each combination
 		const choices: Array<{label: string; url: string; value: string; keys: string[]}> = [];
 
 		combinations.forEach(combination => {
-			// Replace all OR patterns with the corresponding keys from this combination
+			// Replace all OR patterns with the corresponding options from this combination
 			let processedText = text;
+
 			orMatches.forEach((match, index) => {
-				const key = combination[index];
-				const singleKeyPattern = `\${${key}}`;
-				processedText = processedText.replace(match[0], singleKeyPattern);
+				const option = combination[index];
+
+				// Need to escape special regex characters in the pattern
+				const escapedPattern = match.match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+				processedText = processedText.replace(new RegExp(escapedPattern, 'g'), option);
 			});
 
-			// Apply normal pattern replacement
+			// Apply normal pattern replacement to the processed text
+			// This handles any nested ${VAR} patterns within the options
 			const processedUrl = this.replacePatterns(processedText, sourcePath, isInternalLink);
 
-			// Create label from all keys in this combination
+			// Extract dictionary keys from each option in this combination
+			// Options are now already wrapped with ${...} due to grammar sugar
+			const keysInOption: string[] = [];
+			combination.forEach(option => {
+				// Extract all ${KEY} patterns from this option
+				const keysInThisOption = this.extractKeysFromPattern(option);
+				keysInOption.push(...keysInThisOption);
+			});
+
+			// Create label from all options in this combination
 			const label = combination.join(' + ');
 
-			// Get values for display (use first key's value for the value field)
-			const firstKey = combination[0];
-			const dictKey = Object.keys(activeReplacements).find(
-				k => k.toLowerCase() === firstKey.toLowerCase()
-			);
-			const value = dictKey ? activeReplacements[dictKey] : firstKey;
+			// Get value for display (use first option's resolved value)
+			// combination[0] is already wrapped, so extract the first key and resolve it
+			let value = combination[0];
+			const firstOptionKeys = this.extractKeysFromPattern(combination[0]);
+			if (firstOptionKeys.length > 0) {
+				const dictKey = Object.keys(activeReplacements).find(
+					k => k.toLowerCase() === firstOptionKeys[0].toLowerCase()
+				);
+				if (dictKey) {
+					value = activeReplacements[dictKey];
+				}
+			}
 
-			// For OR patterns (comma-separated), each choice uses only its own key
-			// For multiple OR patterns like ${A,B}/${C,D}, the keys array contains
-			// one key from each OR group, and they should be merged (AND logic)
 			choices.push({
 				label: label,
 				url: processedUrl,
 				value: value,
-				keys: combination // This contains one key from each OR pattern group
+				keys: keysInOption // All dictionary keys found in this combination's options
 			});
 		});
 
@@ -429,8 +558,31 @@ export default class MyPlugin extends Plugin {
 				// Generate all choices
 				const choices = this.generateOrPatternChoices(linktext, sourcePath, true);
 
-				// Show modal to let user choose
-				const modal = new LinkChoiceModal(this.app, choices, (chosenUrl) => {
+				// Filter out choices that contain ignored keys (case-insensitive)
+				const filteredChoices = choices.filter(choice => {
+					return !choice.keys.some(key => this.isKeyIgnored(key));
+				});
+
+				// If all choices are filtered out, don't open anything
+				if (filteredChoices.length === 0) {
+					new Notice('All options for this link are ignored on this device');
+					return;
+				}
+
+				// If only one choice remains, open it directly without modal
+				if (filteredChoices.length === 1) {
+					originalOpenLinkText.call(
+						this.app.workspace,
+						filteredChoices[0].url,
+						sourcePath,
+						newLeaf,
+						openViewState
+					);
+					return;
+				}
+
+				// Show modal to let user choose from filtered options
+				const modal = new LinkChoiceModal(this.app, filteredChoices, (chosenUrl) => {
 					// Open the chosen URL
 					originalOpenLinkText.call(
 						this.app.workspace,
@@ -525,7 +677,17 @@ export default class MyPlugin extends Plugin {
 					if (hasOrPattern) {
 						const choices = plugin.generateOrPatternChoices(decodedUrl, undefined, false);
 
-						choices.forEach((choice) => {
+						// Filter out choices that contain ignored keys (case-insensitive)
+						const filteredChoices = choices.filter(choice => {
+							return !choice.keys.some(key => plugin.isKeyIgnored(key));
+						});
+
+						// If all choices are filtered out, don't show menu
+						if (filteredChoices.length === 0) {
+							return;
+						}
+
+						filteredChoices.forEach((choice) => {
 							// Get merged preference for all keys in this combination
 							const pref = choice.keys.length > 0
 								? plugin.getMergedOpenInPreference(choice.keys)
@@ -572,6 +734,15 @@ export default class MyPlugin extends Plugin {
 						// No OR pattern - original behavior with single menu items
 						// Extract keys to check preferences
 						const keys = plugin.extractKeysFromPattern(decodedUrl);
+
+						// Check if any keys are ignored on current device (case-insensitive)
+						const hasIgnoredKey = keys.some(key => plugin.isKeyIgnored(key));
+
+						// Don't show menu if any key is ignored
+						if (hasIgnoredKey) {
+							return;
+						}
+
 						const mergedPref = keys.length > 0 ? plugin.getMergedOpenInPreference(keys) : { webviewer: true, external: true };
 
 						// Add menu item to open in webviewer (only if webviewer is available and preference allows)
@@ -783,10 +954,11 @@ class SampleSettingTab extends PluginSettingTab {
 				});
 
 				const profilesContainer = profilesListContainer.createDiv();
+				profilesContainer.setAttribute('style', 'overflow-x: auto;');
 
 				this.plugin.settings.deviceProfiles.forEach((profile) => {
 					const profileRow = profilesContainer.createDiv();
-					profileRow.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-bottom: 5px;');
+					profileRow.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-bottom: 5px; flex-wrap: nowrap; min-width: fit-content;');
 
 					const nameInput = profileRow.createEl('input', {
 						type: 'text',
@@ -861,7 +1033,7 @@ class SampleSettingTab extends PluginSettingTab {
 
 				// Add new profile button
 				const addDiv = profilesContainer.createDiv();
-				addDiv.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-top: 10px;');
+				addDiv.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-top: 10px; flex-wrap: nowrap; min-width: fit-content;');
 
 				const newNameInput = addDiv.createEl('input', {
 					type: 'text',
@@ -953,6 +1125,7 @@ class SampleSettingTab extends PluginSettingTab {
 
 		// Container for rendering the list of replacements
 		const replacementsContainer = containerEl.createDiv('link-replacements-container');
+		replacementsContainer.setAttribute('style', 'overflow-x: auto;');
 
 		editDictionaryLink.addEventListener('click', (e) => {
 			e.preventDefault();
@@ -1029,7 +1202,7 @@ class SampleSettingTab extends PluginSettingTab {
 
 				// Default row
 				const defaultRow = replacementsContainer.createDiv('replacement-item');
-				defaultRow.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-bottom: 3px;');
+				defaultRow.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-bottom: 3px; flex-wrap: nowrap; min-width: fit-content;');
 
 				// Key input (editable)
 				const keyInput = defaultRow.createEl('input', {
@@ -1038,7 +1211,7 @@ class SampleSettingTab extends PluginSettingTab {
 					value: key,
 					cls: 'replacement-key',
 					attr: {
-						style: 'width: 150px;'
+						style: 'width: 100px;'
 					}
 				});
 
@@ -1065,7 +1238,7 @@ class SampleSettingTab extends PluginSettingTab {
 						return;
 					}
 					if (newKey.includes(',')) {
-						new Notice('Key cannot contain "," character. This is reserved for OR patterns like ${one,two,three}.');
+						new Notice('Key cannot contain "," character. This is reserved for OR patterns like ${one,,two}.');
 						keyInput.value = key; // Revert to old value
 						return;
 					}
@@ -1117,7 +1290,7 @@ class SampleSettingTab extends PluginSettingTab {
 					placeholder: 'Value',
 					value: defaultValue,
 					cls: 'replacement-value',
-					attr: { style: 'flex: 1; min-width: 250px;' }
+					attr: { style: 'flex: 1; min-width: 250px; max-width: 300px;' }
 				});
 
 
@@ -1265,7 +1438,7 @@ class SampleSettingTab extends PluginSettingTab {
 					this.plugin.settings.deviceProfiles.forEach((profile) => {
 						if (key in profile.linkReplacements) {
 							const overrideRow = overridesContainer.createDiv('replacement-item-override');
-							overrideRow.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-bottom: 5px;');
+							overrideRow.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-bottom: 5px; flex-wrap: nowrap; min-width: fit-content;');
 
 						// Empty space for key alignment (same width as key input)
 						const keySpace = overrideRow.createEl('span', {
@@ -1312,20 +1485,50 @@ class SampleSettingTab extends PluginSettingTab {
 							renderReplacements();
 						});
 
-						// Override value input
+						// Check if this override is marked as ignored
+						const isIgnored = profile.linkReplacements[key] === '@@IGNORE@@';
+
+						// Ignored toggle button
+						const ignoredButton = overrideRow.createEl('button', {
+							text: 'Ignored',
+							cls: isIgnored ? 'mod-warning' : 'mod-muted',
+							attr: {
+								title: isIgnored ? 'Currently ignored on this device - click to un-ignore' : 'Click to ignore this key on this device',
+								style: `padding: 2px 8px; font-size: 0.85em; ${isIgnored ? 'font-weight: bold;' : 'opacity: 0.6;'}`
+							}
+						});
+
+						ignoredButton.addEventListener('click', async () => {
+							if (profile.linkReplacements[key] === '@@IGNORE@@') {
+								// Un-ignore: set to default value
+								profile.linkReplacements[key] = defaultValue;
+							} else {
+								// Ignore: set to special marker
+								profile.linkReplacements[key] = '@@IGNORE@@';
+							}
+							await this.plugin.saveSettings();
+							renderReplacements();
+						});
+
+						// Override value input (disabled if ignored)
 						const overrideValueInput = overrideRow.createEl('input', {
 							type: 'text',
-							placeholder: 'Override value',
-							value: profile.linkReplacements[key],
+							placeholder: isIgnored ? '(ignored)' : 'Override value',
+							value: isIgnored ? '' : profile.linkReplacements[key],
 							cls: 'replacement-value',
-							attr: { style: 'flex: 1; min-width: 250px;' }
+							attr: {
+								style: `flex: 1; min-width: 250px; ${isIgnored ? 'opacity: 0.4;' : ''}`,
+								...(isIgnored ? { disabled: 'disabled' } : {})
+							}
 						});
 
 						// Auto-save override value changes
 						overrideValueInput.addEventListener('blur', async () => {
-							const newValue = overrideValueInput.value; // Don't trim - allow blank values
-							profile.linkReplacements[key] = newValue;
-							await this.plugin.saveSettings();
+							if (!isIgnored) {
+								const newValue = overrideValueInput.value; // Don't trim - allow blank values
+								profile.linkReplacements[key] = newValue;
+								await this.plugin.saveSettings();
+							}
 						});
 
 						// Delete override button (only deletes this override, not the default)
@@ -1370,13 +1573,13 @@ class SampleSettingTab extends PluginSettingTab {
 
 			// Add new replacement section (always adds to defaults)
 			const addDiv = replacementsContainer.createDiv('add-replacement');
-			addDiv.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-top: 10px;');
+			addDiv.setAttribute('style', 'display: flex; align-items: center; gap: 5px; margin-top: 10px; flex-wrap: nowrap; min-width: fit-content;');
 
 			const newKeyInput = addDiv.createEl('input', {
 				type: 'text',
 				placeholder: 'Key',
 				cls: 'replacement-key',
-				attr: { style: 'width: 150px;' }
+				attr: { style: 'width: 100px;' }
 			});
 
 			// Label showing this adds to defaults
@@ -1416,7 +1619,7 @@ class SampleSettingTab extends PluginSettingTab {
 					return;
 				}
 				if (key.includes(',')) {
-					new Notice('Key cannot contain "," character. This is reserved for OR patterns like ${one,two,three}.');
+					new Notice('Key cannot contain "," character. This is reserved for OR patterns like ${one,,two}.');
 					return;
 				}
 
