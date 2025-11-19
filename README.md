@@ -2,6 +2,8 @@
 
 Stop repeating yourself. Start linking smarter.
 
+<img src="Media/main example image.png" alt="Main Example" style="zoom: 50%;" />
+
 ## The Problems
 
 **Problem 1: Repetitive Typing**

@@ -255,6 +255,16 @@ With properties:
 [[Notes/${${L:Today},,${L:Today}_backup}]]
 ```
 
+> [!WARNING]
+> **Colon Character Limitation**
+>
+> Obsidian automatically strips `:` characters when processing markdown links `[text](url)`. To use protocols like `file://` or `https://`, store them inside dictionary variables instead of writing them directly in the link.
+>
+> ```markdown
+> ❌ [Link](file://${PATH})           // Colon will be stripped
+> ✅ [Link](${FILE_PROTOCOL}${PATH})  // FILE_PROTOCOL = file://
+> ```
+
 #### Cartesian Product
 
 Multiple OR patterns → All combinations:

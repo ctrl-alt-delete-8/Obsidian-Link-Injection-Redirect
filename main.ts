@@ -693,11 +693,14 @@ export default class MyPlugin extends Plugin {
 								? plugin.getMergedOpenInPreference(choice.keys)
 								: { webviewer: true, external: true };
 
+							// Remove dummy prefix for display
+							const displayUrl = plugin.removeDummyPrefix(choice.url);
+
 							// Decide what to show based on preference and webviewer availability
 							if (hasWebviewerOption && pref.webviewer) {
 								// Webviewer is available and preference allows it
 								menu.addItem((item) => {
-									item.setTitle(`Open in webviewer (${choice.value})`);
+									item.setTitle(`Open in webviewer: ${displayUrl}`);
 									item.setIcon('globe');
 									item.onClick(() => {
 										const finalUrl = plugin.removeDummyPrefix(choice.url);
@@ -711,7 +714,7 @@ export default class MyPlugin extends Plugin {
 							// 2. Webviewer is not available (fallback for webviewer-only preference)
 							if (pref.external || !hasWebviewerOption) {
 								menu.addItem((item) => {
-									item.setTitle(`Open externally (${choice.value})`);
+									item.setTitle(`Open externally: ${displayUrl}`);
 									item.setIcon('external-link');
 									item.onClick(async () => {
 										const finalUrl = plugin.removeDummyPrefix(choice.url);
@@ -745,10 +748,13 @@ export default class MyPlugin extends Plugin {
 
 						const mergedPref = keys.length > 0 ? plugin.getMergedOpenInPreference(keys) : { webviewer: true, external: true };
 
+						// Remove dummy prefix for display
+						const displayUrl = plugin.removeDummyPrefix(processed);
+
 						// Add menu item to open in webviewer (only if webviewer is available and preference allows)
 						if (hasWebviewerOption && mergedPref.webviewer) {
 							menu.addItem((item) => {
-								item.setTitle('Open in webviewer (with injection)');
+								item.setTitle(`Open in webviewer: ${displayUrl}`);
 								item.setIcon('globe');
 								item.onClick(() => {
 									const finalUrl = plugin.removeDummyPrefix(processed);
@@ -763,7 +769,7 @@ export default class MyPlugin extends Plugin {
 						// 2. Webviewer is not available (fallback for webviewer-only preference)
 						if (mergedPref.external || !hasWebviewerOption) {
 							menu.addItem((item) => {
-								item.setTitle('Open externally (with injection)');
+								item.setTitle(`Open externally: ${displayUrl}`);
 								item.setIcon('external-link');
 								item.onClick(async () => {
 									const finalUrl = plugin.removeDummyPrefix(processed);
