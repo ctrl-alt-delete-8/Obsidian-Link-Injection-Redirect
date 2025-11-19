@@ -5,6 +5,7 @@ Stop repeating yourself. Start linking smarter.
 ## The Problems
 
 **Problem 1: Repetitive Typing**
+
 ```markdown
 [Docs](https://my-super-long-domain-name.com/docs)
 [API](https://my-super-long-domain-name.com/api)
@@ -29,7 +30,7 @@ Same vault, different devices, broken links everywhere.
 **Problem 3: Same file Multiple Links = Horizontal Clutter**
 
 ```markdown
-[My pdf webdav](https://my-webdav-server.me/test.pdf) | [My pdf Local](file:///Users/name/Documents/test.pdf) 
+[My pdf webdav](https://my-webdav-server.me/test.pdf) | [My pdf Local](file:///Users/name/Documents/test.pdf)
 ```
 
 Three links to the same file eating up horizontal space, especially if you like to work in live preview. Low information density. Hard to read.
@@ -37,6 +38,7 @@ Three links to the same file eating up horizontal space, especially if you like 
 ## The Solutions
 
 **Solution 1: Variables**
+
 ```markdown
 <!-- Set once: DOMAIN = https://my-super-long-domain-name.com -->
 

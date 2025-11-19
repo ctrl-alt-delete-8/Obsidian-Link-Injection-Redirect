@@ -84,13 +84,17 @@ iOS doesn't expose hidden folders by default, so you'll need a file manager that
 
 ## Getting Started
 
+> [!TIP]
+> Most users can start with just dictionary variables. Only set up device profiles if you're syncing settings across multiple devices with different local paths.
+
 ### Do You Need Device Profiles?
 
 **If you're NOT syncing plugin settings** across devices, you can skip device profiles entirely. Just use the default dictionary settings.
 
 **If you ARE syncing** your vault's plugin settings across multiple devices and need different values per device (like local file paths), device profiles let you override specific keys per vault path.
 
-Reminder: If you have multiple iOS devices that need syncing, changing the vault folder name is necessary for the plugin to distinguish between them.
+> [!IMPORTANT]
+> If you have multiple iOS devices that need syncing, you may need to rename your vault folder on each device to make them unique (e.g., `MyVault-iPhone` vs `MyVault-iPad`). Otherwise, they'll share the same profile since iOS vault paths are typically identical.
 
 <img src="Media/Vault_Profile_Image.png" alt="Vault_Profile_Image" style="zoom: 33%;" />
 
@@ -105,7 +109,8 @@ The plugin handles two types of links differently:
 ```
 **How to use:** Right-click → Choose "Open in webviewer" or "Open externally"
 
-**Why right-click?** External links require right-click because the plugin can only access the link URL from the context menu event. Direct click would require scanning the entire file to find the link text, which would be inefficient. The current approach only reads link content when you interact with it, keeping your vault fast and private.
+> [!NOTE]
+> External links require right-click because the plugin can only access the link URL from the context menu event. This approach only reads link content when you interact with it, keeping your vault fast and private.
 
 #### Internal Links ([[...]])
 ```markdown
@@ -149,17 +154,16 @@ Dictionary variables are perfect for **values that don't change often** across y
 
 Note properties (`${L:property}`) are perfect for **values that change per-note**.
 
-**When to use this plugin vs Dataview inline JavaScript:**
-
-Use this plugin when you need:
-- **OR patterns**: `[[Notes/${${L:Today},,${L:Today}_backup}]]` - Multiple fallback options for a single link
-- **Simple static syntax**: Write once, works everywhere without JavaScript evaluation
-
-Use [Dataview inline JavaScript](https://blacksmithgu.github.io/obsidian-dataview/reference/functions/#elink) when you want:
-- **Fine-grained control**: Access to full JavaScript for complex link logic
-- **Everything except OR patterns**: Dataview can access both note properties AND plugin dictionary settings (see [Displaying Variables section](#displaying-variables-in-note-content))
-
-**Important:** Since Dataview can access plugin settings with `app.plugins.plugins['link-injection-redirect'].settings.defaultLinkReplacements['KEY']`, you can combine global variables and properties using inline JS. The main advantage of this plugin is the simpler static syntax and OR pattern support.
+> [!TIP]
+> **This Plugin vs Dataview**
+>
+> Use this plugin for:
+> - **OR patterns**: `[[Notes/${${L:Today},,${L:Today}_backup}]]` - Multiple fallback options
+> - **Simple syntax**: `${KEY}` - No JavaScript required
+>
+> Use [Dataview inline JavaScript](https://blacksmithgu.github.io/obsidian-dataview/reference/functions/#elink) for:
+> - **Complex logic**: Full JavaScript control for single links
+> - **Advanced access**: Dataview can also access plugin dictionary settings via `app.plugins.plugins['link-injection-redirect'].settings.defaultLinkReplacements['KEY']`
 
 **Example: This Plugin (Simple Syntax)**
 
@@ -274,9 +278,8 @@ Multiple OR patterns → All combinations:
 
 ### Managing Menu Options
 
-By default, each variable shows **two menu items** (webviewer + external). With many variables, your context menu gets crowded.
-
-**Solution:** Disable options you don't need!
+> [!TIP]
+> By default, each variable shows two menu items (webviewer + external). Disable unused options to keep your context menu clean.
 
 #### Setting Per-Key Preferences
 
@@ -301,11 +304,12 @@ By default, each variable shows **two menu items** (webviewer + external). With 
 
 ### Key Naming Rules
 
-**Allowed:** Letters, numbers, underscores (`A-Z`, `a-z`, `0-9`, `_`)
+> [!CAUTION]
+> **Not allowed in key names:**
+> - `:` (reserved for `${L:property}`)
+> - `,` (reserved for OR patterns)
 
-**Not allowed:**
-- `:` (reserved for `${L:property}`)
-- `,` (reserved for OR patterns)
+**Allowed:** Letters, numbers, underscores (`A-Z`, `a-z`, `0-9`, `_`)
 
 ### Case Sensitivity
 
@@ -314,12 +318,14 @@ All dictionary lookups are **case-insensitive**:
 
 ### Special Features
 
-**dummy:// Prefix:**
-Use `dummy://` to help Obsidian recognize links as external:
-```markdown
-[File](dummy://${something})
-```
-The plugin automatically strips this prefix when opening.
+> [!NOTE]
+> **dummy:// Prefix**
+>
+> Use `dummy://` to force Obsidian to recognize text as an external link:
+> ```markdown
+> [File](dummy://${something})
+> ```
+> The plugin automatically strips this prefix when opening.
 
 ### Displaying Variables in Note Content
 
