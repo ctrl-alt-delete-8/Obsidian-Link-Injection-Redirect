@@ -703,7 +703,7 @@ export default class MyPlugin extends Plugin {
 									item.setTitle(`Open in webviewer: ${displayUrl}`);
 									item.setIcon('globe');
 									item.onClick(() => {
-										const finalUrl = plugin.removeDummyPrefix(choice.url);
+										const finalUrl = encodeURI(plugin.removeDummyPrefix(choice.url));
 										window.open(finalUrl, '_blank');
 									});
 								});
@@ -717,7 +717,7 @@ export default class MyPlugin extends Plugin {
 									item.setTitle(`Open externally: ${displayUrl}`);
 									item.setIcon('external-link');
 									item.onClick(async () => {
-										const finalUrl = plugin.removeDummyPrefix(choice.url);
+										const finalUrl = encodeURI(plugin.removeDummyPrefix(choice.url));
 										const electron = (window as any).require?.('electron');
 										if (electron?.shell?.openExternal) {
 											try {
@@ -757,7 +757,7 @@ export default class MyPlugin extends Plugin {
 								item.setTitle(`Open in webviewer: ${displayUrl}`);
 								item.setIcon('globe');
 								item.onClick(() => {
-									const finalUrl = plugin.removeDummyPrefix(processed);
+									const finalUrl = encodeURI(plugin.removeDummyPrefix(processed));
 									window.open(finalUrl, '_blank');
 								});
 							});
@@ -772,7 +772,7 @@ export default class MyPlugin extends Plugin {
 								item.setTitle(`Open externally: ${displayUrl}`);
 								item.setIcon('external-link');
 								item.onClick(async () => {
-									const finalUrl = plugin.removeDummyPrefix(processed);
+									const finalUrl = encodeURI(plugin.removeDummyPrefix(processed));
 									const electron = (window as any).require?.('electron');
 									if (electron?.shell?.openExternal) {
 										try {
